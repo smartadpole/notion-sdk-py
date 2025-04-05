@@ -3,6 +3,7 @@ import sys
 from pprint import pprint
 
 from notion_client import Client
+from time import time
 
 try:
     from dotenv import load_dotenv
@@ -21,8 +22,30 @@ while NOTION_TOKEN == "":
 notion = Client(auth=NOTION_TOKEN)
 
 
+def get_property(query):
+    property = None
+    property = properties.get(query)
+    if property:
+        property = property["name"]
+        print(f"find {query} property: {property}")
+    else:
+        print(f"no {query} property, creating...")
+        property = query
+
+        notion.databases.update(
+            database_id=database_id,
+            properties={
+                property : {
+                    "rich_text": {}
+                }
+            }
+        )
+        print("create success.")
+
+    return property
+
 # Search for an item
-print("\nSearching for the word 'People' ")
+print("\nSearching for database 'People' ")
 results = notion.search(query="People").get("results")
 print(len(results))
 result = results[0]
@@ -31,13 +54,24 @@ pprint(result["properties"])
 
 database_id = result["id"]  # store the database id in a variable for future use
 
+properties = result["properties"]
+title_property = next((name for name, prop in properties.items()
+                       if prop["type"] == "title"), None)
+if not title_property:
+    print("警告: 未找到标题类型属性")
+    title_property = list(properties.keys())[0]
+
+print(f"\ndatabase title name is: {title_property}")
+
+github_property = get_property("GitHub")
+
 # Create a new page
 your_name = input("\n\nEnter your name: ")
 gh_uname = input("Enter your github username: ")
 new_page = {
-    "Name": {"title": [{"text": {"content": your_name}}]},
-    "Tags": {"type": "multi_select", "multi_select": [{"name": "python"}]},
-    "GitHub": {
+    title_property: {"title": [{"text": {"content": your_name}}]},
+    # "Tags": {"type": "multi_select", "multi_select": [{"name": "python"}]},
+    github_property : {
         "type": "rich_text",
         "rich_text": [
             {
@@ -47,16 +81,19 @@ new_page = {
         ],
     },
 }
+
+start = time()
 notion.pages.create(parent={"database_id": database_id}, properties=new_page)
-print("You were added to the People database!")
+print(f"You were added to the People database! use time: {(time() - start):.2f}s")
 
 
 # Query a database
-name = input("\n\nEnter the name of the person to search in People: ")
+start = time()
+name = input("\n\nEnter the name of the title to search in People: ")
 results = notion.databases.query(
     **{
         "database_id": database_id,
-        "filter": {"property": "Name", "rich_text": {"contains": name}},
+        "filter": {"property": title_property, "rich_text": {"contains": name}},
     }
 ).get("results")
 
@@ -66,7 +103,7 @@ if no_of_results == 0:
     print("No results found.")
     sys.exit()
 
-print(f"No of results found: {len(results)}")
+print(f"No of results found: {len(results)}, use time: {(time() - start):.2f} s")
 
 result = results[0]
 
