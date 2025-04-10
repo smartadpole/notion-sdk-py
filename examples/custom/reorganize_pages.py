@@ -161,19 +161,37 @@ def get_children_pages(notion, page_id, exclude_page_id=None):
 
     return children
 
-def move_page_to_end(notion, page_id, parent_page_id):
+def move_page_to_end(notion, page, parent_page_id):
     """Move a page to the end of the parent page"""
     try:
-        # Get current page title
-        current_page = notion.pages.retrieve(page_id=page_id)
-        page_title = current_page['properties']['title']['title'][0]['text']['content']
-
-        # Move page to the end of the parent page
-        notion.pages.update(
-            page_id=page_id,
-            parent={"page_id": parent_page_id},
-            properties=current_page["properties"]
-        )
+        page_title = page["child_page"]["title"]
+        
+        # Get current page properties
+        current_page = notion.pages.retrieve(page_id=page["id"])
+        
+        # Check if the page is an inline page
+        is_inline_page = notion.blocks.retrieve(block_id=page['id'])["type"] == "child_page"
+        if is_inline_page:
+            # Append a link to the inline page
+            notion.blocks.children.append(
+                block_id=parent_page_id,
+                children=[
+                    {
+                        "type": "link_to_page",
+                        "link_to_page": {
+                            "type": "page_id",
+                            "page_id": page["id"]
+                        }
+                    }
+                ]
+            )
+        else:
+            # Move as a regular page
+            notion.pages.update(
+                page_id=page["id"],
+                parent={"page_id": parent_page_id},
+                properties=current_page["properties"]
+            )
         return True
     except Exception as e:
         logging.error(f"Error moving page: {page_title if 'page_title' in locals() else 'Unknown'}")
@@ -194,28 +212,28 @@ def main():
     # Get page ID
     try:
         if args.page.startswith("http"):
-            page_id = get_id(args.page)
+            org_page_id = get_id(args.page)
         else:
-            page_id = args.page
-        logging.info(f"Using page ID: {page_id}")
+            org_page_id = args.page
+        logging.info(f"Using page ID: {org_page_id}")
     except Exception as e:
         logging.error(f"Invalid page ID or URL: {e}")
         logging.error("Please provide a valid Notion page URL or ID")
         sys.exit(1)
 
-    logging.info(f"Processing page: {page_id}")
+    logging.info(f"Processing page: {org_page_id}")
     logging.info(f"Keyword: {args.keyword}")
 
     # Get or create title page
     title = args.title or f"Pages containing {args.keyword}"
-    title_page_id = get_or_create_title_page(notion, page_id, title)
+    dst_page_id = get_or_create_title_page(notion, org_page_id, title)
 
-    if not title_page_id:
+    if not dst_page_id:
         logging.error("Failed to get/create title page")
         return
 
     # Get all child pages excluding the title page
-    children = get_children_pages(notion, page_id, exclude_page_id=title_page_id)
+    children = get_children_pages(notion, org_page_id, exclude_page_id=dst_page_id)
     if not children:
         logging.error("No child pages found or access denied")
         sys.exit(1)
@@ -233,22 +251,22 @@ def main():
         logging.warning("No matching pages found")
         return
 
+    total_pages = len(matching_pages)
+
     if args.dry_run:
-        logging.info("\nMatching pages:")
         page_titles = [f"- {page['child_page']['title']}" for page in matching_pages]
-        logging.info("\nMatching pages:\n" + "\n".join(page_titles))
+        logging.info(f"Matching {total_pages} pages:\n" + "\n".join(page_titles))
         logging.info(f"\nTotal matching pages: {len(matching_pages)}")
         logging.info("Dry run mode: pages will not be moved")
         return
 
     # Move matching pages to the end of the page
-    total_pages = len(matching_pages)
     moved_count = 0
     logging.info(f"\nMoving {total_pages} pages...")
 
     for i, page in enumerate(matching_pages, 1):
         page_title = page["child_page"]["title"]
-        if not move_page_to_end(notion, page["id"], page_id):
+        if not move_page_to_end(notion, page, dst_page_id):
             logging.error(f"[{i}/{total_pages}] Failed to move: {page_title}")
         else:
             logging.info(f"[{i}/{total_pages}] Successfully moved: {page_title}")
