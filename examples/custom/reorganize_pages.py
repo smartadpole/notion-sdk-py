@@ -57,11 +57,27 @@ def get_args():
     """Parse command line arguments"""
     parser = argparse.ArgumentParser(description='Reorganize Notion pages')
     parser.add_argument('page', help='Notion page URL or ID')
-    parser.add_argument('keyword', help='Search keyword')
+    parser.add_argument('keywords', nargs='+', help='Search keywords (multiple keywords supported)')
     parser.add_argument('--title', default=None, help='Custom title (optional)')
     parser.add_argument('--dry-run', action='store_true', help='Show pages to be moved without actually moving them')
     parser.add_argument('--debug', action='store_true', help='Enable debug mode for detailed logging')
     return parser.parse_args()
+
+def setup_logging(debug_mode):
+    """Setup logging configuration"""
+    if debug_mode:
+        logging.getLogger().setLevel(logging.DEBUG)
+
+def get_page_id(page_input):
+    """Get page ID from URL or direct ID"""
+    try:
+        if page_input.startswith("http"):
+            return get_id(page_input)
+        return page_input
+    except Exception as e:
+        logging.error(f"Invalid page ID or URL: {e}")
+        logging.error("Please provide a valid Notion page URL or ID")
+        sys.exit(1)
 
 def get_or_create_title_page(notion, parent_page_id, title):
     """Get existing title page or create a new one in parent directory"""
@@ -228,87 +244,111 @@ def print_error_guide(error_type, error_details=None):
 
     print("\n" + "="*80)
 
+def create_title_pages(notion, parent_page_id, keywords, custom_title=None):
+    """Create title pages for each keyword"""
+    title_pages = {}
+    for keyword in keywords:
+        title = custom_title or f"{keyword}"
+        dst_page_id = get_or_create_title_page(notion, parent_page_id, title)
+        if not dst_page_id:
+            print_error_guide(f"Failed to get/create title page for keyword: {keyword}")
+            continue
+        title_pages[keyword] = dst_page_id
+    return title_pages
+
+def filter_matching_pages(children, keywords):
+    """Filter pages containing keywords"""
+    matching_pages = {keyword: [] for keyword in keywords}
+    for child in children:
+        title = child["child_page"]["title"]
+        for keyword in keywords:
+            if keyword.lower() in title.lower():
+                matching_pages[keyword].append(child)
+    return matching_pages
+
+def display_dry_run_results(matching_pages):
+    """Display results in dry run mode"""
+    for keyword, pages in matching_pages.items():
+        if pages:
+            page_titles = [f"- {page['child_page']['title']}" for page in pages]
+            logging.info(f"\nMatching pages for keyword '{keyword}':\n" + "\n".join(page_titles))
+    logging.info("\nDry run mode: pages will not be moved")
+
+def move_pages_for_keyword(notion, pages, dst_page_id, keyword, keyword_index, total_keywords):
+    """Move pages for a specific keyword"""
+    if not pages:
+        return 0
+
+    total_pages = len(pages)
+    logging.info(f"\nMoving {total_pages} pages for keyword '{keyword}' ({keyword_index}/{total_keywords})...")
+
+    moved_count = 0
+    for i, page in enumerate(pages, 1):
+        page_title = page["child_page"]["title"]
+        if not move_page(notion, page, dst_page_id):
+            logging.error(f"[{i}/{total_pages}][{keyword_index}/{total_keywords}] Failed to move: {page_title}")
+        else:
+            logging.info(f"[{i}/{total_pages}][{keyword_index}/{total_keywords}] Successfully moved: {page_title}")
+            moved_count += 1
+
+    if moved_count < total_pages:
+        logging.error(f"\nOperation completed with errors for keyword '{keyword}' ({keyword_index}/{total_keywords}):")
+        logging.error(f"Total pages to move: {total_pages}")
+        logging.error(f"Successfully moved: {moved_count}")
+        logging.error(f"Failed to move: {total_pages - moved_count}")
+
+    return moved_count
+
 def main():
     # Parse command line arguments
     args = get_args()
 
-    # Set logging level
-    if args.debug:
-        logging.getLogger().setLevel(logging.DEBUG)
+    # Setup logging
+    setup_logging(args.debug)
 
     # Initialize client
     notion = setup_client()
 
     # Get page ID
-    try:
-        if args.page.startswith("http"):
-            org_page_id = get_id(args.page)
-        else:
-            org_page_id = args.page
-        logging.info(f"Using page ID: {org_page_id}")
-    except Exception as e:
-        logging.error(f"Invalid page ID or URL: {e}")
-        logging.error("Please provide a valid Notion page URL or ID")
-        sys.exit(1)
-
+    org_page_id = get_page_id(args.page)
+    logging.info(f"Using page ID: {org_page_id}")
     logging.info(f"Processing page: {org_page_id}")
-    logging.info(f"Keyword: {args.keyword}")
+    logging.info(f"Keywords: {', '.join(args.keywords)}")
 
-    # Get or create title page
-    title = args.title or f"{args.keyword}"
-    dst_page_id = get_or_create_title_page(notion, org_page_id, title)
-
-    if not dst_page_id:
-        print_error_guide("Failed to get/create title page")
+    # Create title pages
+    title_pages = create_title_pages(notion, org_page_id, args.keywords, args.title)
+    if not title_pages:
+        print_error_guide("Failed to create any title pages")
         return
 
-    # Get all child pages excluding the title page
-    children = get_children_pages(notion, org_page_id, exclude_page_id=dst_page_id)
+    # Get all child pages excluding the title pages
+    children = get_children_pages(notion, org_page_id, exclude_page_id=list(title_pages.values()))
     if not children:
         logging.error("No child pages found or access denied")
         sys.exit(1)
 
     logging.info(f"Found {len(children)} child pages")
 
-    # Filter pages containing keyword
-    matching_pages = []
-    for child in children:
-        title = child["child_page"]["title"]
-        if args.keyword.lower() in title.lower():
-            matching_pages.append(child)
-
-    if not matching_pages:
+    # Filter matching pages
+    matching_pages = filter_matching_pages(children, args.keywords)
+    if not any(matching_pages.values()):
         logging.warning("No matching pages found")
         return
 
-    total_pages = len(matching_pages)
-
+    # Dry run mode
     if args.dry_run:
-        page_titles = [f"- {page['child_page']['title']}" for page in matching_pages]
-        logging.info(f"Matching {total_pages} pages:\n" + "\n".join(page_titles))
-        logging.info(f"\nTotal matching pages: {len(matching_pages)}")
-        logging.info("Dry run mode: pages will not be moved")
+        display_dry_run_results(matching_pages)
         return
 
-    # Move matching pages to the end of the page
-    moved_count = 0
-    logging.info(f"\nMoving {total_pages} pages...")
+    # Move pages
+    total_moved = 0
+    total_keywords = len(matching_pages)
+    for keyword_index, (keyword, pages) in enumerate(matching_pages.items(), 1):
+        dst_page_id = title_pages[keyword]
+        total_moved += move_pages_for_keyword(notion, pages, dst_page_id, keyword, keyword_index, total_keywords)
 
-    for i, page in enumerate(matching_pages, 1):
-        page_title = page["child_page"]["title"]
-        if not move_page(notion, page, dst_page_id):
-            logging.error(f"[{i}/{total_pages}] Failed to move: {page_title}")
-        else:
-            logging.info(f"[{i}/{total_pages}] Successfully moved: {page_title}")
-            moved_count += 1
-
-    if moved_count < total_pages:
-        logging.error(f"\nOperation completed with errors:")
-        logging.error(f"Total pages to move: {total_pages}")
-        logging.error(f"Successfully moved: {moved_count}")
-        logging.error(f"Failed to move: {total_pages - moved_count}")
-    else:
-        logging.info(f"\nSuccessfully moved all {total_pages} pages")
+    if total_moved > 0:
+        logging.info(f"\nSuccessfully moved {total_moved} pages in total")
 
 if __name__ == "__main__":
     main()
