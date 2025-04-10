@@ -45,6 +45,10 @@ def setup_client():
         ]
     )
 
+    # Set Notion client logger to WARNING level to hide successful HTTP requests
+    # todo: hao 2025-04-11 01:38 - not work
+    logging.getLogger("notion_client._client").setLevel(logging.WARNING)
+
     return notion
 
 def get_args():
@@ -203,8 +207,16 @@ def main():
     logging.info(f"Processing page: {page_id}")
     logging.info(f"Keyword: {args.keyword}")
 
+    # Get or create title page
+    title = args.title or f"Pages containing {args.keyword}"
+    title_page_id = get_or_create_title_page(notion, page_id, title)
+
+    if not title_page_id:
+        logging.error("Failed to get/create title page")
+        return
+
     # Get all child pages excluding the title page
-    children = get_children_pages(notion, page_id, exclude_page_id=None)
+    children = get_children_pages(notion, page_id, exclude_page_id=title_page_id)
     if not children:
         logging.error("No child pages found or access denied")
         sys.exit(1)
@@ -230,14 +242,6 @@ def main():
         logging.info("Dry run mode: pages will not be moved")
         return
 
-    # Get or create title page
-    title = args.title or f"Pages containing '{args.keyword}'"
-    title_page_id = get_or_create_title_page(notion, page_id, title)
-
-    if not title_page_id:
-        logging.error("Failed to get/create title page")
-        return
-
     # Move matching pages to the end of the page
     total_pages = len(matching_pages)
     moved_count = 0
@@ -248,6 +252,7 @@ def main():
         if not move_page_to_end(notion, page["id"], page_id):
             logging.error(f"[{i}/{total_pages}] Failed to move: {page_title}")
         else:
+            logging.info(f"[{i}/{total_pages}] Successfully moved: {page_title}")
             moved_count += 1
 
     if moved_count < total_pages:
