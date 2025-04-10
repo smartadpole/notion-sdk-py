@@ -46,8 +46,9 @@ def setup_client():
     )
 
     # Set Notion client logger to WARNING level to hide successful HTTP requests
-    # todo: hao 2025-04-11 01:38 - not work
-    logging.getLogger("notion_client._client").setLevel(logging.WARNING)
+    logging.getLogger("notion_client").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
     return notion
 
@@ -64,15 +65,13 @@ def get_args():
 def get_or_create_title_page(notion, parent_page_id, title):
     """Get existing title page or create a new one"""
     try:
-        # Search for existing title page
-        search_results = notion.search(
-            query=title,
-            filter={"property": "object", "value": "page"}
-        ).get("results", [])
+        # Search for pages with the title
+        search_results = notion.search(query=title,filter={"property": "object", "value": "page"}).get("results", [])
 
-        # Check if any of the results is a direct child of the parent page
+        # Check if any of the search results is a direct child of the parent page and has exact title match
         for page in search_results:
-            if page["parent"]["page_id"] == parent_page_id:
+            if (page.get("parent", {}).get("page_id") == parent_page_id and
+                page["properties"]["title"]["title"][0]["text"]["content"] == title):
                 logging.info(f"Found existing title page: {title}")
                 return page["id"]
 
@@ -165,11 +164,11 @@ def get_children_pages(notion, page_id, exclude_page_id=None):
 def move_page_to_end(notion, page_id, parent_page_id):
     """Move a page to the end of the parent page"""
     try:
-        # Get current page position and title
+        # Get current page title
         current_page = notion.pages.retrieve(page_id=page_id)
         page_title = current_page['properties']['title']['title'][0]['text']['content']
 
-        # Update page position to be under the parent page
+        # Move page to the end of the parent page
         notion.pages.update(
             page_id=page_id,
             parent={"page_id": parent_page_id},
