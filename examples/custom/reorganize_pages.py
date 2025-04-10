@@ -1,8 +1,8 @@
 #!/usr/bin/python3
 # encoding: utf-8
 '''
-@author: 孙昊
-@contact: smartadpole@163.com
+@author: sunhao
+@contact: smartadpole@gmail.com
 @file: reorganize_pages.py
 @time: 2025/4/11 00:24
 @desc: Reorganize subpages in a Notion page based on keyword
@@ -16,6 +16,7 @@ from notion_client import Client
 from notion_client.helpers import get_id
 import argparse
 import logging
+from util.utils import timeit
 
 def setup_client():
     """Initialize and configure the Notion client"""
@@ -161,17 +162,37 @@ def get_children_pages(notion, page_id, exclude_page_id=None):
 
     return children
 
-def move_page_to_end(notion, page, parent_page_id):
+def is_page_linked(notion, parent_page_id, page_id):
+    """Check if a page is already linked in the parent page"""
+    try:
+        # Get all children blocks of the parent page
+        children = notion.blocks.children.list(block_id=parent_page_id)
+
+        # Check if any block is a link_to_page pointing to our page
+        for block in children["results"]:
+            if (block["type"] == "link_to_page" and
+                    block["link_to_page"]["type"] == "page_id" and
+                    block["link_to_page"]["page_id"] == page_id):
+                return True
+        return False
+    except Exception as e:
+        logging.error(f"Error checking page link: {e}")
+        return False
+
+@timeit(5)
+def move_page(notion, page, parent_page_id):
     """Move a page to the end of the parent page"""
     try:
         page_title = page["child_page"]["title"]
-        
+
         # Get current page properties
         current_page = notion.pages.retrieve(page_id=page["id"])
-        
+
         # Check if the page is an inline page
         is_inline_page = notion.blocks.retrieve(block_id=page['id'])["type"] == "child_page"
         if is_inline_page:
+            if is_page_linked(notion, parent_page_id, page['id']):
+                return True
             # Append a link to the inline page
             notion.blocks.children.append(
                 block_id=parent_page_id,
@@ -266,7 +287,7 @@ def main():
 
     for i, page in enumerate(matching_pages, 1):
         page_title = page["child_page"]["title"]
-        if not move_page_to_end(notion, page, dst_page_id):
+        if not move_page(notion, page, dst_page_id):
             logging.error(f"[{i}/{total_pages}] Failed to move: {page_title}")
         else:
             logging.info(f"[{i}/{total_pages}] Successfully moved: {page_title}")
