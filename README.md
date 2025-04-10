@@ -262,3 +262,11 @@ If you want to submit a feature request for Notion's API, or are experiencing
 any issues with the API platform, please email `developers@makenotion.com`.
 
 If you found a bug with the library, please [submit an issue](https://github.com/ramnes/notion-sdk-py/issues).
+
+## Examples
+
+我们提供了一些示例来帮助您快速上手：
+
+- [示例文档](examples/README.md) - 包含以下内容：
+  - 基础 API 使用示例：基本的 API 调用、异步操作、分页处理和错误处理
+  - 页面重组工具：根据关键词搜索和重组 Notion 页面中的子页面，支持内联页面和普通页面的移动，提供预览模式
