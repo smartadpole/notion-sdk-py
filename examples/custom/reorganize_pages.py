@@ -64,22 +64,26 @@ def get_args():
     return parser.parse_args()
 
 def get_or_create_title_page(notion, parent_page_id, title):
-    """Get existing title page or create a new one"""
+    """Get existing title page or create a new one in parent directory"""
     try:
+        # Get parent page info to get its parent directory
+        parent_page = notion.pages.retrieve(page_id=parent_page_id)
+        parent_directory_id = parent_page["parent"]["page_id"]
+
         # Search for pages with the title
         search_results = notion.search(query=title,filter={"property": "object", "value": "page"}).get("results", [])
 
-        # Check if any of the search results is a direct child of the parent page and has exact title match
+        # Check if any of the search results is a direct child of the parent directory and has exact title match
         for page in search_results:
-            if (page.get("parent", {}).get("page_id") == parent_page_id and
+            if (page.get("parent", {}).get("page_id") == parent_directory_id and
                 page["properties"]["title"]["title"][0]["text"]["content"] == title):
                 logging.info(f"Found existing title page: {title}")
                 return page["id"]
 
-        # If no existing page found, create a new one
+        # If no existing page found, create a new one in parent directory
         logging.info(f"Creating new title page: {title}")
         new_page = notion.pages.create(
-            parent={"page_id": parent_page_id},
+            parent={"page_id": parent_directory_id},
             properties={
                 "title": {
                     "title": [
@@ -107,34 +111,7 @@ def get_children_pages(notion, page_id, exclude_page_id=None):
         page = notion.pages.retrieve(page_id=page_id)
         logging.info(f"Successfully accessed page: {page['properties']['title']['title'][0]['text']['content']}")
     except Exception as e:
-        print("\n" + "="*80)
-        print("ACCESS DENIED: Failed to access the Notion page")
-        print("="*80)
-        print(f"Error details: {e}")
-        print("\nPlease follow these steps to resolve the issue:")
-
-        print("\n1. VERIFY PAGE ID")
-        print("   • Get the correct page ID from your Notion URL")
-        print("   • Example URL format: https://www.notion.so/your-workspace/page-title-page-id")
-
-        print("\n2. SHARE PAGE WITH INTEGRATION")
-        print("   • Open the Notion page in your browser")
-        print("   • Click the '...' menu (top right)")
-        print("   • Select 'Add connections'")
-        print("   • Find and select your integration")
-
-        print("\n3. CHECK INTEGRATION PERMISSIONS")
-        print("   • Visit: https://www.notion.so/my-integrations")
-        print("   • Verify your integration has:")
-        print("     - 'Read content' permission")
-        print("     - 'Update content' permission")
-
-        print("\n4. VERIFY INTEGRATION TOKEN")
-        print("   • Check your integration token")
-        print("   • Token should start with 'secret_'")
-        print("   • Ensure token is correctly set in environment")
-
-        print("\n" + "="*80)
+        print_error_guide("Failed to access the Notion page", e)
         return []
 
     try:
@@ -219,6 +196,38 @@ def move_page(notion, page, parent_page_id):
         logging.error(f"Error details: {e}")
         return False
 
+def print_error_guide(error_type, error_details=None):
+    """Print detailed error guide for Notion API errors"""
+    print("\n" + "="*80)
+    print(f"ACCESS DENIED: {error_type}")
+    print("="*80)
+    if error_details:
+        print(f"Error details: {error_details}")
+    print("\nPlease follow these steps to resolve the issue:")
+
+    print("\n1. VERIFY PAGE ID")
+    print("   • Get the correct page ID from your Notion URL")
+    print("   • Example URL format: https://www.notion.so/your-workspace/page-title-page-id")
+
+    print("\n2. SHARE PAGE WITH INTEGRATION")
+    print("   • Open the Notion page in your browser")
+    print("   • Click the '...' menu (top right)")
+    print("   • Select 'Add connections'")
+    print("   • Find and select your integration")
+
+    print("\n3. CHECK INTEGRATION PERMISSIONS")
+    print("   • Visit: https://www.notion.so/my-integrations")
+    print("   • Verify your integration has:")
+    print("     - 'Read content' permission")
+    print("     - 'Update content' permission")
+
+    print("\n4. VERIFY INTEGRATION TOKEN")
+    print("   • Check your integration token")
+    print("   • Token should start with 'secret_'")
+    print("   • Ensure token is correctly set in environment")
+
+    print("\n" + "="*80)
+
 def main():
     # Parse command line arguments
     args = get_args()
@@ -246,11 +255,11 @@ def main():
     logging.info(f"Keyword: {args.keyword}")
 
     # Get or create title page
-    title = args.title or f"Pages containing {args.keyword}"
+    title = args.title or f"{args.keyword}"
     dst_page_id = get_or_create_title_page(notion, org_page_id, title)
 
     if not dst_page_id:
-        logging.error("Failed to get/create title page")
+        print_error_guide("Failed to get/create title page")
         return
 
     # Get all child pages excluding the title page
